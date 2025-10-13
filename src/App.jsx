@@ -16,15 +16,21 @@ export default function App() {
           <h1 className="font-bold text-lg">Kinko Manager</h1>
         </div>
 
-        {/* ✅ Logo centré */}
-        <div className="flex-1 flex justify-center">
-          <img
-            src={logo}
-            alt="Kinko Logo"
-            className="h-8 object-contain"
-            style={{ maxHeight: "32px" }}
-          />
-        </div>
+        {/* ✅ Logo centré et cliquable */}
+<div className="flex-1 flex justify-center">
+  <Link
+    to="/dashboard"
+    className="flex items-center gap-2 hover:opacity-80 transition"
+  >
+    <img
+      src={logo}
+      alt="Kinko Logo"
+      className="h-8 object-contain"
+      style={{ maxHeight: "32px" }}
+    />
+  </Link>
+</div>
+
 
         {/* Menu de droite */}
         <nav className="flex items-center gap-4 text-sm font-medium">

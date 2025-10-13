@@ -1,18 +1,17 @@
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   Package,
   Calendar,
-  Clock,
   AlertTriangle,
-  Heart,
-  ThumbsUp,
-  Meh,
-  ThumbsDown,
-  Skull,
+  Layers,
+  Workflow,
+  Tag,
+  Clock,
   LayoutDashboard,
   CheckCircle,
 } from "lucide-react";
@@ -25,8 +24,9 @@ import parseISO from "date-fns/parseISO";
 // -------------------------
 export default function Dashboard() {
   const [products, setProducts] = useState([]);
+  const navigate = useNavigate();
 
-  // Chargement des produits depuis Supabase
+  // Chargement des produits
   useEffect(() => {
     async function load() {
       const { data, error } = await supabase
@@ -39,7 +39,7 @@ export default function Dashboard() {
     load();
   }, []);
 
-  // Statuts de pipeline (Kanban)
+  // Statuts du pipeline
   const statuses = [
     "Idée",
     "Prototype",
@@ -50,7 +50,7 @@ export default function Dashboard() {
     "Commercialisé",
   ];
 
-  // Drag & Drop du pipeline
+  // Gestion du Drag & Drop
   const onDragEnd = async (result) => {
     if (!result.destination) return;
     const { source, destination, draggableId } = result;
@@ -67,79 +67,64 @@ export default function Dashboard() {
     }
   };
 
-  // Section Suivi des rappels
-  const suivi = products
-    .filter((p) => p.reminder_date)
-    .sort(
-      (a, b) => new Date(a.reminder_date) - new Date(b.reminder_date)
-    );
+  // -------- LOGIQUE D’ANALYSE --------
 
-  const handleDone = async (id) => {
-    await supabase
-      .from("products")
-      .update({ reminder_done: true })
-      .eq("id", id);
-    setProducts(
-      products.map((p) =>
-        p.id === id ? { ...p, reminder_done: true } : p
-      )
-    );
+  // Comptages par type
+  const countByType = {
+    "3D": products.filter((p) => p.kind === "3d").length,
+    Commandé: products.filter((p) => p.kind === "ordered").length,
   };
 
+  // Comptage des statuts pipeline
+  const countByStatus = statuses.map((s) => ({
+    name: s,
+    total: products.filter((p) => p.status === s).length,
+  }));
+
+  // Tags uniques
+  const allTags = [
+    ...new Set(products.flatMap((p) => p.tags || [])),
+  ].filter(Boolean);
+
+  // Rappels
+  const now = new Date();
+  const upcomingReminders = products.filter((p) => {
+    if (!p.followup_at) return false;
+    const days = differenceInDays(parseISO(p.followup_at), now);
+    return days >= 0 && days <= 7 && !p.reminder_done;
+  });
+
+  const overdueReminders = products.filter((p) => {
+    if (!p.followup_at) return false;
+    const days = differenceInDays(parseISO(p.followup_at), now);
+    return days < 0 && !p.reminder_done;
+  });
+
+  const futureReminders = products.filter((p) => {
+    if (!p.followup_at) return false;
+    const days = differenceInDays(parseISO(p.followup_at), now);
+    return days > 7 && !p.reminder_done;
+  });
+
+  // Fonction de couleur pour badges
   const colorDays = (days) => {
-    if (days <= 0) return "bg-red-500 text-white";
+    if (days < 0) return "bg-red-500 text-white";
     if (days <= 3) return "bg-orange-400 text-white";
     return "bg-green-500 text-white";
   };
 
-  // Indicateurs principaux
-  const indicators = [
-    {
-      label: "Produits totaux",
-      icon: Package,
-      value: products.length,
-    },
-    {
-      label: "Rappels en attente",
-      icon: Calendar,
-      value: suivi.filter((p) => !p.reminder_done).length,
-    },
-    {
-      label: "Produits validés unanimement ❤️",
-      icon: Heart,
-      value: products.filter(
-        (p) =>
-          p.votes &&
-          Object.values(p.votes).every(
-            (v) =>
-              (v.guillaume === "❤️" && v.david === "❤️") ||
-              (v.guillaume === "👍" && v.david === "👍")
-          )
-      ).length,
-    },
-    {
-      label: "Produits sans votes / photo ⚠️",
-      icon: AlertTriangle,
-      value: products.filter(
-        (p) => !p.votes || !p.files || p.files.length === 0
-      ).length,
-    },
-  ];
-
-  // -------------------------
-  // RENDU VISUEL
-  // -------------------------
+  // -------- RENDU --------
   return (
-    <div className="p-8 bg-gradient-to-br from-slate-50 to-slate-100 min-h-screen space-y-8">
+    <div className="p-8 bg-gradient-to-br from-slate-50 to-slate-100 min-h-screen space-y-10">
       {/* HEADER */}
-      <header className="flex items-center justify-between mb-6">
+      <header className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-3">
             <LayoutDashboard className="text-blue-600 w-8 h-8" />
             Tableau de bord Kinko
           </h1>
           <p className="text-slate-500">
-            Votre cockpit de pilotage — production, rappels et statut global
+            Un vrai cockpit pour suivre vos produits, rappels et statuts
           </p>
         </div>
         <Button
@@ -152,43 +137,75 @@ export default function Dashboard() {
 
       {/* === SECTION 1 : INDICATEURS === */}
       <section>
-        <h2 className="text-xl font-semibold mb-4">📈 Indicateurs globaux</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {indicators.map((ind, i) => (
-            <Card
-              key={i}
-              className="p-4 flex flex-col items-center border shadow-sm bg-white hover:shadow-md transition"
-            >
-              <ind.icon className="h-6 w-6 text-blue-500 mb-2" />
-              <div className="text-2xl font-bold">{ind.value}</div>
-              <div className="text-slate-500 text-sm text-center">
-                {ind.label}
-              </div>
-            </Card>
-          ))}
+        <h2 className="text-xl font-semibold mb-3">📈 Vue d’ensemble</h2>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <Card className="flex flex-col items-center p-4 text-center shadow-sm">
+            <Package className="text-blue-500 mb-2" />
+            <div className="text-2xl font-bold">{products.length}</div>
+            <div className="text-slate-500 text-sm">Produits totaux</div>
+          </Card>
+
+          <Card className="flex flex-col items-center p-4 text-center shadow-sm">
+            <Layers className="text-blue-500 mb-2" />
+            <div className="text-lg font-bold">
+              {countByType["3D"]} / {countByType["Commandé"]}
+            </div>
+            <div className="text-slate-500 text-sm">3D / Commandés</div>
+          </Card>
+
+          <Card className="flex flex-col items-center p-4 text-center shadow-sm">
+            <Workflow className="text-blue-500 mb-2" />
+            <div className="text-lg font-bold">
+              {countByStatus.filter((s) => s.total > 0).length}
+            </div>
+            <div className="text-slate-500 text-sm">
+              Statuts actifs pipeline
+            </div>
+          </Card>
+
+          <Card className="flex flex-col items-center p-4 text-center shadow-sm">
+            <Tag className="text-blue-500 mb-2" />
+            <div className="text-lg font-bold">{allTags.length}</div>
+            <div className="text-slate-500 text-sm">Tags uniques</div>
+          </Card>
+
+          <Card className="flex flex-col items-center p-4 text-center shadow-sm">
+            <Clock className="text-blue-500 mb-2" />
+            <div className="text-lg font-bold">{upcomingReminders.length}</div>
+            <div className="text-slate-500 text-sm">Rappels 7j à venir</div>
+          </Card>
+
+          <Card className="flex flex-col items-center p-4 text-center shadow-sm">
+            <AlertTriangle className="text-red-500 mb-2" />
+            <div className="text-lg font-bold">{overdueReminders.length}</div>
+            <div className="text-slate-500 text-sm">Rappels en retard</div>
+          </Card>
         </div>
       </section>
 
-      {/* === SECTION 2 : PIPELINE (KANBAN) === */}
+      {/* === SECTION 2 : PIPELINE PRODUITS === */}
       <section>
         <h2 className="text-xl font-semibold mb-4">📦 Pipeline produits</h2>
         <div className="overflow-x-auto">
           <DragDropContext onDragEnd={onDragEnd}>
             <div className="flex gap-4 min-w-max">
-              {statuses.map((status) => (
-                <Droppable droppableId={status} key={status}>
-                  {(provided) => (
-                    <div
-                      ref={provided.innerRef}
-                      {...provided.droppableProps}
-                      className="bg-white rounded-xl shadow-sm border p-4 w-64 flex flex-col"
-                    >
-                      <h3 className="font-semibold text-center text-blue-600 mb-3">
-                        {status}
-                      </h3>
-                      {products
-                        .filter((p) => p.status === status)
-                        .map((p, index) => (
+              {statuses.map((status) => {
+                const prods = products.filter((p) => p.status === status);
+                return (
+                  <Droppable droppableId={status} key={status}>
+                    {(provided) => (
+                      <div
+                        ref={provided.innerRef}
+                        {...provided.droppableProps}
+                        className="bg-white rounded-xl shadow-sm border p-4 w-64 flex flex-col"
+                      >
+                        <h3 className="font-semibold text-center text-blue-600 mb-2">
+                          {status}{" "}
+                          <span className="text-slate-500 text-sm">
+                            ({prods.length})
+                          </span>
+                        </h3>
+                        {prods.map((p, index) => (
                           <Draggable
                             key={p.id}
                             draggableId={p.id}
@@ -199,76 +216,126 @@ export default function Dashboard() {
                                 ref={prov.innerRef}
                                 {...prov.draggableProps}
                                 {...prov.dragHandleProps}
-                                className="p-3 bg-slate-100 hover:bg-slate-200 border rounded-md mb-2 text-sm cursor-grab transition"
+                                onClick={() =>
+                                  navigate(`/products?id=${p.id}`)
+                                }
+                                className="p-3 bg-slate-100 hover:bg-blue-100 border rounded-md mb-2 text-sm cursor-pointer transition"
                               >
                                 <div className="font-medium">{p.name}</div>
-                                {p.reminder_date && (
+                                {p.folder && (
                                   <div className="text-xs text-slate-500">
-                                    ⏰ {new Date(p.reminder_date).toLocaleDateString("fr-FR")}
+                                    📁 {p.folder}
+                                  </div>
+                                )}
+                                {Array.isArray(p.tags) && p.tags.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {p.tags.slice(0, 2).map((t) => (
+                                      <Badge
+                                        key={t}
+                                        variant="outline"
+                                        className="text-[10px]"
+                                      >
+                                        {t}
+                                      </Badge>
+                                    ))}
                                   </div>
                                 )}
                               </div>
                             )}
                           </Draggable>
                         ))}
-                      {provided.placeholder}
-                    </div>
-                  )}
-                </Droppable>
-              ))}
+                        {provided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+                );
+              })}
             </div>
           </DragDropContext>
         </div>
       </section>
 
-      {/* === SECTION 3 : SUIVI DES RAPPELS === */}
+      {/* === SECTION 3 : RAPPELS === */}
       <section>
-        <h2 className="text-xl font-semibold mb-4">⏰ Suivi des rappels</h2>
-        <Card className="shadow-sm border bg-white">
-          <CardContent className="divide-y">
-            {suivi.length === 0 && (
-              <p className="text-slate-500 text-sm py-3 text-center">
-                Aucun rappel programmé.
-              </p>
-            )}
-            {suivi.map((p) => {
-              const daysLeft = differenceInDays(parseISO(p.reminder_date), new Date());
-              return (
-                <div
-                  key={p.id}
-                  className="py-3 flex items-center justify-between hover:bg-slate-50 px-2 rounded-lg transition"
-                >
-                  <div>
-                    <div className="font-medium">{p.name}</div>
-                    <div className="text-xs text-slate-500">
-                      Rappel prévu le{" "}
-                      {new Date(p.reminder_date).toLocaleDateString("fr-FR", {
-                        dateStyle: "medium",
-                      })}
-                    </div>
+        <h2 className="text-xl font-semibold mb-3">⏰ Suivi des rappels</h2>
+        <div className="grid md:grid-cols-3 gap-4">
+          {/* En retard */}
+          <Card className="border bg-white shadow-sm">
+            <CardContent className="p-3">
+              <h3 className="font-semibold text-red-600 mb-2">
+                🔴 En retard ({overdueReminders.length})
+              </h3>
+              {overdueReminders.length === 0 && (
+                <p className="text-xs text-slate-400">Aucun rappel en retard</p>
+              )}
+              {overdueReminders.map((p) => (
+                <div key={p.id} className="border-t py-1 text-sm">
+                  <div
+                    onClick={() => navigate(`/products?id=${p.id}`)}
+                    className="cursor-pointer hover:underline"
+                  >
+                    {p.name}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge className={colorDays(daysLeft)}>
-                      {daysLeft} j
-                    </Badge>
-                    {!p.reminder_done && (
-                      <Button
-                        size="sm"
-                        onClick={() => handleDone(p.id)}
-                        className="bg-green-500 hover:bg-green-600"
-                      >
-                        ✅ Fait
-                      </Button>
-                    )}
-                    {p.reminder_done && (
-                      <CheckCircle className="text-green-600 w-5 h-5" />
-                    )}
-                  </div>
+                  <Badge className="bg-red-500 text-white mt-1">
+                    {differenceInDays(parseISO(p.followup_at), now)} j
+                  </Badge>
                 </div>
-              );
-            })}
-          </CardContent>
-        </Card>
+              ))}
+            </CardContent>
+          </Card>
+
+          {/* Bientôt */}
+          <Card className="border bg-white shadow-sm">
+            <CardContent className="p-3">
+              <h3 className="font-semibold text-orange-600 mb-2">
+                🟠 Cette semaine ({upcomingReminders.length})
+              </h3>
+              {upcomingReminders.length === 0 && (
+                <p className="text-xs text-slate-400">Aucun rappel proche</p>
+              )}
+              {upcomingReminders.map((p) => (
+                <div key={p.id} className="border-t py-1 text-sm">
+                  <div
+                    onClick={() => navigate(`/products?id=${p.id}`)}
+                    className="cursor-pointer hover:underline"
+                  >
+                    {p.name}
+                  </div>
+                  <Badge className={colorDays(
+                    differenceInDays(parseISO(p.followup_at), now)
+                  )}>
+                    {differenceInDays(parseISO(p.followup_at), now)} j
+                  </Badge>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          {/* Plus tard */}
+          <Card className="border bg-white shadow-sm">
+            <CardContent className="p-3">
+              <h3 className="font-semibold text-green-600 mb-2">
+                🟢 À venir ({futureReminders.length})
+              </h3>
+              {futureReminders.length === 0 && (
+                <p className="text-xs text-slate-400">Aucun rappel prévu</p>
+              )}
+              {futureReminders.map((p) => (
+                <div key={p.id} className="border-t py-1 text-sm">
+                  <div
+                    onClick={() => navigate(`/products?id=${p.id}`)}
+                    className="cursor-pointer hover:underline"
+                  >
+                    {p.name}
+                  </div>
+                  <Badge className="bg-green-500 text-white mt-1">
+                    {differenceInDays(parseISO(p.followup_at), now)} j
+                  </Badge>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
       </section>
     </div>
   );

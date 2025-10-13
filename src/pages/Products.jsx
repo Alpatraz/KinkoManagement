@@ -92,9 +92,11 @@ export default function Products() {
     moq: 0,
     leadTime: "",
   });
-
+  
   /* ========= CONSTANTES / HELPERS ========= */
-  const code = sku || autoCode({ name, kind });
+  const code = useMemo(() => {
+    return sku || autoCode({ name, kind, folder, version });
+  }, [sku, name, kind, folder, version]);
   const DEFAULT_MARGIN = 0.45;
   const DEFAULT_RESELLER_DISCOUNT = 0.30;
   const ELECTRICITY_RATE = 0.12;
@@ -152,11 +154,13 @@ export default function Products() {
     return `${y}${m}${day}`;
   }
 
-  function autoCode({ name, kind }) {
-    const base = slugify(name || "produit");
-    const t = kind === "3d" ? "3D" : "ORD";
-    return `${t}_${base}_${today()}`.toUpperCase();
-  }
+  function autoCode({ name, kind, folder, version }) {
+    const baseName = slugify(name || "produit").replace(/-/g, "_").toUpperCase();
+    const cat = (folder || "GEN").replace(/[^A-Z0-9]/gi, "_").toUpperCase();
+    const type = kind === "3d" ? "3D" : "ORD";
+    const ver = (version || "V1").toUpperCase();
+    return `${type}_${cat}_${baseName}_${ver}`;
+  }  
 
   function nextVersionForCode(items, code) {
     const vers = (items || [])
@@ -551,13 +555,25 @@ async function removeImage(productId, file) {
 // ✅ Nouvelle fonction de vote émotionnel multi-utilisateurs
 async function handleVote(productId, imagePath, user, emoji) {
   try {
-    const current = items.find((p) => p.id === productId);
-    if (!current) return;
+    // 🔄 Charge toujours la version la plus récente du produit
+    const { data: fresh, error: fetchError } = await supabase
+      .from("products")
+      .select("votes")
+      .eq("id", productId)
+      .single();
 
-    const updatedVotes = { ...(current.votes || {}) };
+    if (fetchError) throw fetchError;
+
+    const currentVotes = fresh?.votes || {};
+    const updatedVotes = { ...currentVotes };
+
+    // 🔧 Si l’image n’existe pas encore, on crée son sous-objet
     if (!updatedVotes[imagePath]) updatedVotes[imagePath] = {};
+
+    // ✅ On met à jour uniquement le vote du bon utilisateur
     updatedVotes[imagePath][user] = emoji;
 
+    // 🧱 Update complet (pas partiel)
     const { data, error } = await supabase
       .from("products")
       .update({ votes: updatedVotes })
@@ -567,13 +583,17 @@ async function handleVote(productId, imagePath, user, emoji) {
 
     if (error) throw error;
 
-    setItems((prev) => [data, ...prev.filter((p) => p.id !== productId)]);
-    if (drawerProduct?.id === productId) setDrawerProduct(data);
+    // 🔁 Met à jour localement
+    setItems((prev) =>
+      prev.map((p) => (p.id === productId ? data : p))
+    );
+    if (drawerProduct?.id === productId) {
+      setDrawerProduct({ ...drawerProduct, votes: updatedVotes });
+    }
   } catch (e) {
-    console.error("Erreur vote:", e);
+    console.error("Erreur handleVote:", e.message || e);
   }
 }
-
 
   /* ======= Rendu ======= */
   return (
@@ -1155,15 +1175,28 @@ async function handleVote(productId, imagePath, user, emoji) {
   };
 
   const avgEmoji = (filePath) => {
-    const v = votes[filePath] || {};
-    const vals = Object.values(v);
-    if (vals.length === 0) return "❓";
-    const rank = ["💀", "👎", "😐", "👍", "❤️"];
-    const avgIndex = Math.round(
-      vals.map((e) => rank.indexOf(e)).reduce((a, b) => a + b, 0) / vals.length
-    );
-    return rank[Math.max(0, Math.min(rank.length - 1, avgIndex))];
-  };
+    let v = votes[filePath] || {};
+  
+    // ✅ Fallback si votes sont globaux
+    if (Object.keys(v).length === 0 && Object.values(votes).every(val => typeof val === "string")) {
+      v = votes;
+    }
+  
+    const allVotes = Object.values(v).filter(Boolean);
+    if (allVotes.length === 0) return "❓";
+  
+    const scoreMap = { "💀": 1, "👎": 2, "😐": 3, "👍": 4, "❤️": 5 };
+  
+    const avg =
+      allVotes.reduce((sum, emoji) => sum + (scoreMap[emoji] || 0), 0) /
+      allVotes.length;
+  
+    if (avg >= 4.5) return "❤️";
+    if (avg >= 3.5) return "👍";
+    if (avg >= 2.5) return "😐";
+    if (avg >= 1.5) return "👎";
+    return "💀";
+  };  
 
   return (
     <div>
@@ -1190,10 +1223,12 @@ async function handleVote(productId, imagePath, user, emoji) {
 
               {/* Barre colorée score moyen */}
               <div
-                className={`mt-2 text-xs px-2 py-1 rounded-full font-medium ${emojiColor[avg] || "bg-gray-100 text-gray-700"}`}
-              >
-                Score moyen : {avg}
-              </div>
+  className={`mt-2 text-xs px-2 py-1 rounded-full font-medium flex items-center gap-1 justify-center ${emojiColor[avg] || "bg-gray-100 text-gray-700"}`}
+>
+  <span>Score moyen :</span>
+  <span className="text-lg">{avg}</span>
+</div>
+
 
               {/* Votes utilisateurs */}
               <div className="mt-3 w-full space-y-2">
