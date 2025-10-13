@@ -1,299 +1,275 @@
-import React, { useEffect, useState, useMemo } from "react";
-import { createClient } from "@supabase/supabase-js";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import React, { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
   Package,
-  Plus,
-  Layers,
-  Activity,
+  Calendar,
   Clock,
-  Filter,
-  BarChart3,
-  ThumbsDown,
+  AlertTriangle,
+  Heart,
   ThumbsUp,
+  Meh,
+  ThumbsDown,
+  Skull,
+  LayoutDashboard,
+  CheckCircle,
 } from "lucide-react";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
-import { supabase } from "@/lib/supabaseClient";
+import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
+import differenceInDays from "date-fns/differenceInDays";
+import parseISO from "date-fns/parseISO";
 
+// -------------------------
+// DASHBOARD PRINCIPAL
+// -------------------------
 export default function Dashboard() {
-  // --- Connexion Supabase ---
-  function makeClient() {
-    const url = import.meta.env.VITE_SUPABASE_URL;
-    const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    if (!url || !key) {
-      console.error("⚠️ Supabase non configuré");
-      return null;
-    }
-    return createClient(url, key);
-  }
-
-  const sb = makeClient();
-  const configured = !!sb;
-
-  // --- États ---
   const [products, setProducts] = useState([]);
-  const [filterStatus, setFilterStatus] = useState("Tous");
-  const [filterAuthor, setFilterAuthor] = useState("Tous");
 
-  // --- Chargement des produits ---
+  // Chargement des produits depuis Supabase
   useEffect(() => {
-    if (!configured) return;
-    (async () => {
-      const { data, error } = await sb
+    async function load() {
+      const { data, error } = await supabase
         .from("products")
         .select("*")
         .order("created_at", { ascending: false });
-      if (!error && data) setProducts(data);
-      else console.error("Erreur chargement produits :", error);
-    })();
-  }, [configured]);
+      if (error) console.error(error);
+      else setProducts(data || []);
+    }
+    load();
+  }, []);
 
-  // --- Helpers ---
-  function isImagePath(pathOrName = "") {
-    return /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(pathOrName);
-  }
-
-  // --- Statistiques globales ---
-  const stats = useMemo(() => {
-    const total = products.length;
-    const prototypes = products.filter((p) => p.status === "Prototype").length;
-    const production = products.filter((p) => p.status === "Production").length;
-    const commercial = products.filter((p) => p.status === "Commercialisé").length;
-    const idee = products.filter((p) => p.status === "Idée").length;
-    return { total, prototypes, production, commercial, idee };
-  }, [products]);
-
-  // --- Graphique circulaire ---
-  const chartData = [
-    { name: "Idée", value: stats.idee, color: "#d1d5db" },
-    { name: "Prototype", value: stats.prototypes, color: "#fbbf24" },
-    { name: "Production", value: stats.production, color: "#3b82f6" },
-    { name: "Commercialisé", value: stats.commercial, color: "#10b981" },
+  // Statuts de pipeline (Kanban)
+  const statuses = [
+    "Idée",
+    "Prototype",
+    "En attente",
+    "Validé",
+    "Commandé",
+    "Production",
+    "Commercialisé",
   ];
 
-  // --- Calcul de la moyenne de votes ---
-  const totalVotes = products.reduce((acc, p) => {
-    const votes = Object.values(p.votes || {}).reduce(
-      (sum, v) => sum + (v.up || 0) + (v.down || 0),
-      0
+  // Drag & Drop du pipeline
+  const onDragEnd = async (result) => {
+    if (!result.destination) return;
+    const { source, destination, draggableId } = result;
+
+    if (source.droppableId !== destination.droppableId) {
+      const updated = products.map((p) =>
+        p.id === draggableId ? { ...p, status: destination.droppableId } : p
+      );
+      setProducts(updated);
+      await supabase
+        .from("products")
+        .update({ status: destination.droppableId })
+        .eq("id", draggableId);
+    }
+  };
+
+  // Section Suivi des rappels
+  const suivi = products
+    .filter((p) => p.reminder_date)
+    .sort(
+      (a, b) => new Date(a.reminder_date) - new Date(b.reminder_date)
     );
-    return acc + votes;
-  }, 0);
 
-  const avgVotes =
-    products.length > 0 ? Math.round(totalVotes / products.length) : 0;
-
-  // --- Produits filtrés ---
-  const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
-      const matchStatus = filterStatus === "Tous" || p.status === filterStatus;
-      const matchAuthor = filterAuthor === "Tous" || p.author === filterAuthor;
-      return matchStatus && matchAuthor;
-    });
-  }, [products, filterStatus, filterAuthor]);
-
-  // --- Produits à valider (peu de votes) ---
-  const lowVoteProducts = products.filter((p) => {
-    const votes = Object.values(p.votes || {}).reduce(
-      (sum, v) => sum + (v.up || 0) + (v.down || 0),
-      0
+  const handleDone = async (id) => {
+    await supabase
+      .from("products")
+      .update({ reminder_done: true })
+      .eq("id", id);
+    setProducts(
+      products.map((p) =>
+        p.id === id ? { ...p, reminder_done: true } : p
+      )
     );
-    return votes < 2;
-  });
+  };
 
-  // --- Rendu principal ---
+  const colorDays = (days) => {
+    if (days <= 0) return "bg-red-500 text-white";
+    if (days <= 3) return "bg-orange-400 text-white";
+    return "bg-green-500 text-white";
+  };
+
+  // Indicateurs principaux
+  const indicators = [
+    {
+      label: "Produits totaux",
+      icon: Package,
+      value: products.length,
+    },
+    {
+      label: "Rappels en attente",
+      icon: Calendar,
+      value: suivi.filter((p) => !p.reminder_done).length,
+    },
+    {
+      label: "Produits validés unanimement ❤️",
+      icon: Heart,
+      value: products.filter(
+        (p) =>
+          p.votes &&
+          Object.values(p.votes).every(
+            (v) =>
+              (v.guillaume === "❤️" && v.david === "❤️") ||
+              (v.guillaume === "👍" && v.david === "👍")
+          )
+      ).length,
+    },
+    {
+      label: "Produits sans votes / photo ⚠️",
+      icon: AlertTriangle,
+      value: products.filter(
+        (p) => !p.votes || !p.files || p.files.length === 0
+      ).length,
+    },
+  ];
+
+  // -------------------------
+  // RENDU VISUEL
+  // -------------------------
   return (
-    <div className="min-h-screen w-full bg-slate-50 text-slate-800">
-      {/* ===== HEADER ===== */}
-      <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
-        <div className="mx-auto max-w-6xl px-4 py-3 flex items-center gap-3">
-          <Package className="h-6 w-6" />
-          <h1 className="font-bold text-lg">Tableau de bord</h1>
-          <Badge variant="secondary" className="ml-auto">
-            Vue globale
-          </Badge>
+    <div className="p-8 bg-gradient-to-br from-slate-50 to-slate-100 min-h-screen space-y-8">
+      {/* HEADER */}
+      <header className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-bold flex items-center gap-3">
+            <LayoutDashboard className="text-blue-600 w-8 h-8" />
+            Tableau de bord Kinko
+          </h1>
+          <p className="text-slate-500">
+            Votre cockpit de pilotage — production, rappels et statut global
+          </p>
         </div>
+        <Button
+          onClick={() => window.location.reload()}
+          className="bg-blue-600 hover:bg-blue-700"
+        >
+          🔄 Actualiser
+        </Button>
       </header>
 
-      {/* ===== CONTENU ===== */}
-      <main className="mx-auto max-w-6xl p-6 grid gap-6">
-        {/* ==== Stats rapides ==== */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <Card className="p-4 flex flex-col items-center">
-            <Layers className="h-6 w-6 text-blue-500" />
-            <div className="text-lg font-bold">{stats.total}</div>
-            <div className="text-slate-500 text-sm">Produits totaux</div>
-          </Card>
-          <Card className="p-4 flex flex-col items-center">
-            <Clock className="h-6 w-6 text-amber-500" />
-            <div className="text-lg font-bold">{stats.prototypes}</div>
-            <div className="text-slate-500 text-sm">Prototypes</div>
-          </Card>
-          <Card className="p-4 flex flex-col items-center">
-            <Activity className="h-6 w-6 text-green-500" />
-            <div className="text-lg font-bold">{stats.production}</div>
-            <div className="text-slate-500 text-sm">En production</div>
-          </Card>
-          <Card className="p-4 flex flex-col items-center">
-            <Package className="h-6 w-6 text-purple-500" />
-            <div className="text-lg font-bold">{stats.commercial}</div>
-            <div className="text-slate-500 text-sm">Commercialisés</div>
-          </Card>
-          <Card className="p-4 flex flex-col items-center">
-            <BarChart3 className="h-6 w-6 text-emerald-500" />
-            <div className="text-lg font-bold">{avgVotes}</div>
-            <div className="text-slate-500 text-sm">Votes moyens / produit</div>
-          </Card>
+      {/* === SECTION 1 : INDICATEURS === */}
+      <section>
+        <h2 className="text-xl font-semibold mb-4">📈 Indicateurs globaux</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {indicators.map((ind, i) => (
+            <Card
+              key={i}
+              className="p-4 flex flex-col items-center border shadow-sm bg-white hover:shadow-md transition"
+            >
+              <ind.icon className="h-6 w-6 text-blue-500 mb-2" />
+              <div className="text-2xl font-bold">{ind.value}</div>
+              <div className="text-slate-500 text-sm text-center">
+                {ind.label}
+              </div>
+            </Card>
+          ))}
         </div>
+      </section>
 
-        {/* ==== Graphique circulaire ==== */}
-        <Card>
-          <CardContent className="p-6 flex flex-col md:flex-row items-center justify-center gap-6">
-            <div className="w-full md:w-1/2 h-64">
-              <ResponsiveContainer>
-                <PieChart>
-                  <Pie
-                    data={chartData}
-                    dataKey="value"
-                    nameKey="name"
-                    innerRadius={60}
-                    outerRadius={100}
-                    paddingAngle={5}
-                  >
-                    {chartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="text-sm text-slate-600 space-y-2">
-              {chartData.map((d, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <span
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: d.color }}
-                  ></span>
-                  <span className="font-medium">{d.name}</span> : {d.value}
-                </div>
+      {/* === SECTION 2 : PIPELINE (KANBAN) === */}
+      <section>
+        <h2 className="text-xl font-semibold mb-4">📦 Pipeline produits</h2>
+        <div className="overflow-x-auto">
+          <DragDropContext onDragEnd={onDragEnd}>
+            <div className="flex gap-4 min-w-max">
+              {statuses.map((status) => (
+                <Droppable droppableId={status} key={status}>
+                  {(provided) => (
+                    <div
+                      ref={provided.innerRef}
+                      {...provided.droppableProps}
+                      className="bg-white rounded-xl shadow-sm border p-4 w-64 flex flex-col"
+                    >
+                      <h3 className="font-semibold text-center text-blue-600 mb-3">
+                        {status}
+                      </h3>
+                      {products
+                        .filter((p) => p.status === status)
+                        .map((p, index) => (
+                          <Draggable
+                            key={p.id}
+                            draggableId={p.id}
+                            index={index}
+                          >
+                            {(prov) => (
+                              <div
+                                ref={prov.innerRef}
+                                {...prov.draggableProps}
+                                {...prov.dragHandleProps}
+                                className="p-3 bg-slate-100 hover:bg-slate-200 border rounded-md mb-2 text-sm cursor-grab transition"
+                              >
+                                <div className="font-medium">{p.name}</div>
+                                {p.reminder_date && (
+                                  <div className="text-xs text-slate-500">
+                                    ⏰ {new Date(p.reminder_date).toLocaleDateString("fr-FR")}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </Draggable>
+                        ))}
+                      {provided.placeholder}
+                    </div>
+                  )}
+                </Droppable>
               ))}
             </div>
-          </CardContent>
-        </Card>
+          </DragDropContext>
+        </div>
+      </section>
 
-        {/* ==== Produits à valider ==== */}
-        {lowVoteProducts.length > 0 && (
-          <Card className="border-amber-300 bg-amber-50">
-            <CardContent className="p-4">
-              <h2 className="text-lg font-semibold flex items-center gap-2 text-amber-700 mb-3">
-                <ThumbsDown className="h-5 w-5" /> Produits à valider
-              </h2>
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {lowVoteProducts.map((p) => (
-                  <div
-                    key={p.id}
-                    className="p-3 border rounded-lg bg-white shadow-sm flex flex-col gap-1"
-                  >
-                    <div className="font-medium">{p.name}</div>
-                    <div className="text-xs text-slate-500">
-                      {p.status || "—"} ·{" "}
-                      {(Object.values(p.votes || {}).reduce(
-                        (sum, v) => sum + (v.up || 0) + (v.down || 0),
-                        0
-                      ) || 0)}{" "}
-                      vote(s)
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ==== Suivi CRM & Médias ==== */}
-        <section className="mt-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <Filter className="h-5 w-5 text-slate-500" /> Suivi CRM et médias
-            </h2>
-            <div className="flex gap-3">
-              <select
-                className="border rounded-lg p-2 text-sm bg-white shadow-sm"
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-              >
-                <option value="Tous">Tous les statuts</option>
-                <option value="Idée">Idée</option>
-                <option value="Prototype">Prototype</option>
-                <option value="Production">Production</option>
-                <option value="Commercialisé">Commercialisé</option>
-              </select>
-              <select
-                className="border rounded-lg p-2 text-sm bg-white shadow-sm"
-                value={filterAuthor}
-                onChange={(e) => setFilterAuthor(e.target.value)}
-              >
-                <option value="Tous">Tous les auteurs</option>
-                <option value="Guillaume">Guillaume</option>
-                <option value="David">David</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredProducts.map((p) => {
-              const statusColor =
-                {
-                  Idée: "bg-gray-200 text-gray-800",
-                  Prototype: "bg-yellow-100 text-yellow-800",
-                  Production: "bg-blue-100 text-blue-800",
-                  Commercialisé: "bg-green-100 text-green-800",
-                }[p.status] || "bg-slate-100 text-slate-800";
-
-              const imageCount = (p.files || []).filter((f) =>
-                isImagePath(f.path)
-              ).length;
-              const votesTotal = Object.values(p.votes || {}).reduce(
-                (acc, v) => acc + (v.up || 0) + (v.down || 0),
-                0
-              );
-
+      {/* === SECTION 3 : SUIVI DES RAPPELS === */}
+      <section>
+        <h2 className="text-xl font-semibold mb-4">⏰ Suivi des rappels</h2>
+        <Card className="shadow-sm border bg-white">
+          <CardContent className="divide-y">
+            {suivi.length === 0 && (
+              <p className="text-slate-500 text-sm py-3 text-center">
+                Aucun rappel programmé.
+              </p>
+            )}
+            {suivi.map((p) => {
+              const daysLeft = differenceInDays(parseISO(p.reminder_date), new Date());
               return (
                 <div
                   key={p.id}
-                  className="p-4 border rounded-xl bg-white shadow-sm flex flex-col gap-2"
+                  className="py-3 flex items-center justify-between hover:bg-slate-50 px-2 rounded-lg transition"
                 >
-                  <div className="flex justify-between items-center">
-                    <span className="font-medium">{p.name}</span>
-                    <span
-                      className={`text-xs px-2 py-1 rounded-full ${statusColor}`}
-                    >
-                      {p.status}
-                    </span>
+                  <div>
+                    <div className="font-medium">{p.name}</div>
+                    <div className="text-xs text-slate-500">
+                      Rappel prévu le{" "}
+                      {new Date(p.reminder_date).toLocaleDateString("fr-FR", {
+                        dateStyle: "medium",
+                      })}
+                    </div>
                   </div>
-                  <div className="text-xs text-slate-600">
-                    {imageCount} image(s) · {votesTotal} vote(s)
-                  </div>
-                  <div className="w-full bg-slate-200 h-2 rounded-full mt-1">
-                    <div
-                      className="h-2 bg-emerald-500 rounded-full transition-all"
-                      style={{
-                        width: `${Math.min(
-                          (votesTotal / (imageCount * 5 || 1)) * 100,
-                          100
-                        )}%`,
-                      }}
-                    />
+                  <div className="flex items-center gap-2">
+                    <Badge className={colorDays(daysLeft)}>
+                      {daysLeft} j
+                    </Badge>
+                    {!p.reminder_done && (
+                      <Button
+                        size="sm"
+                        onClick={() => handleDone(p.id)}
+                        className="bg-green-500 hover:bg-green-600"
+                      >
+                        ✅ Fait
+                      </Button>
+                    )}
+                    {p.reminder_done && (
+                      <CheckCircle className="text-green-600 w-5 h-5" />
+                    )}
                   </div>
                 </div>
               );
             })}
-          </div>
-        </section>
-      </main>
+          </CardContent>
+        </Card>
+      </section>
     </div>
   );
 }

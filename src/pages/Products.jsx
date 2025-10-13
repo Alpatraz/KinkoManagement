@@ -548,29 +548,32 @@ async function removeImage(productId, file) {
   }
 }
 
-async function handleVote(productId, imagePath, direction) {
-  const current = items.find((p) => p.id === productId);
-  if (!current) return;
+// ✅ Nouvelle fonction de vote émotionnel multi-utilisateurs
+async function handleVote(productId, imagePath, user, emoji) {
+  try {
+    const current = items.find((p) => p.id === productId);
+    if (!current) return;
 
-  const newVotes = { ...(current.votes || {}) };
-  const currentVote = newVotes[imagePath] || { up: 0, down: 0 };
+    const updatedVotes = { ...(current.votes || {}) };
+    if (!updatedVotes[imagePath]) updatedVotes[imagePath] = {};
+    updatedVotes[imagePath][user] = emoji;
 
-  if (direction === "up") currentVote.up++;
-  else currentVote.down++;
+    const { data, error } = await supabase
+      .from("products")
+      .update({ votes: updatedVotes })
+      .eq("id", productId)
+      .select()
+      .single();
 
-  newVotes[imagePath] = currentVote;
+    if (error) throw error;
 
-  const { data, error } = await supabase
-    .from("products")
-    .update({ votes: newVotes })
-    .eq("id", productId)
-    .select()
-    .single();
-
-  if (!error) {
     setItems((prev) => [data, ...prev.filter((p) => p.id !== productId)]);
+    if (drawerProduct?.id === productId) setDrawerProduct(data);
+  } catch (e) {
+    console.error("Erreur vote:", e);
   }
 }
+
 
   /* ======= Rendu ======= */
   return (
@@ -1133,47 +1136,101 @@ async function handleVote(productId, imagePath, direction) {
               {drawerProduct.description || "Aucune description."}
             </p>
 
-            {/* Galerie & votes */}
-            {(() => {
-              const imgs = (drawerProduct.files || []).filter(
-                (f) => f && (f.path || f.name) && isImagePath(f.path || f.name)
-              );
-              if (!imgs.length) return null;
-              return (
-                <div>
-                  <div className="text-sm font-medium mb-2">Images & votes</div>
-                  <div className="grid grid-cols-2 gap-3">
-                    {imgs.map((file, idx) => {
-                      const { data } = supabase.storage.from("product_file").getPublicUrl(file.path);
-                      const url = data.publicUrl;
-                      const productVotes = drawerProduct.votes || {};
-                      const thisVote = productVotes[file.path] || { up: 0, down: 0 };
-                      return (
-                        <div key={idx} className="border rounded-xl p-2 bg-white shadow-sm">
-                          <img src={url} alt={file.name} className="w-full h-24 object-cover rounded-lg border" />
-                          <div className="flex gap-2 mt-2 justify-center">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleVote(drawerProduct.id, file.path, "up")}
-                            >
-                              👍 {thisVote.up}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleVote(drawerProduct.id, file.path, "down")}
-                            >
-                              👎 {thisVote.down}
-                            </Button>
-                          </div>
-                        </div>
-                      );
-                    })}
+            {/* Galerie & votes améliorés */}
+{(() => {
+  const imgs = (drawerProduct.files || []).filter(
+    (f) => f && (f.path || f.name) && isImagePath(f.path || f.name)
+  );
+  if (!imgs.length) return null;
+
+  const votes = drawerProduct.votes || {};
+  const users = ["Guillaume", "David"];
+
+  const emojiColor = {
+    "❤️": "bg-pink-100 text-pink-700",
+    "👍": "bg-green-100 text-green-700",
+    "😐": "bg-yellow-100 text-yellow-700",
+    "👎": "bg-orange-100 text-orange-700",
+    "💀": "bg-red-100 text-red-700",
+  };
+
+  const avgEmoji = (filePath) => {
+    const v = votes[filePath] || {};
+    const vals = Object.values(v);
+    if (vals.length === 0) return "❓";
+    const rank = ["💀", "👎", "😐", "👍", "❤️"];
+    const avgIndex = Math.round(
+      vals.map((e) => rank.indexOf(e)).reduce((a, b) => a + b, 0) / vals.length
+    );
+    return rank[Math.max(0, Math.min(rank.length - 1, avgIndex))];
+  };
+
+  return (
+    <div>
+      <h3 className="text-sm font-medium mb-2">Images & votes</h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {imgs.map((file, idx) => {
+          const { data } = supabase.storage
+            .from("product_file")
+            .getPublicUrl(file.path);
+          const url = data.publicUrl;
+          const fileVotes = votes[file.path] || {};
+          const avg = avgEmoji(file.path);
+
+          return (
+            <div
+              key={idx}
+              className="border rounded-xl p-3 bg-white shadow-sm flex flex-col items-center hover:shadow-md transition"
+            >
+              <img
+                src={url}
+                alt={file.name}
+                className="w-full h-32 object-cover rounded-lg border"
+              />
+
+              {/* Barre colorée score moyen */}
+              <div
+                className={`mt-2 text-xs px-2 py-1 rounded-full font-medium ${emojiColor[avg] || "bg-gray-100 text-gray-700"}`}
+              >
+                Score moyen : {avg}
+              </div>
+
+              {/* Votes utilisateurs */}
+              <div className="mt-3 w-full space-y-2">
+                {users.map((u) => (
+                  <div
+                    key={u}
+                    className="flex flex-col items-center border-t pt-2"
+                  >
+                    <span className="text-[11px] font-semibold mb-1 text-slate-600">
+                      {u}
+                    </span>
+                    <div className="grid grid-cols-5 gap-1">
+                      {["❤️", "👍", "😐", "👎", "💀"].map((emoji) => (
+                        <Button
+                          key={emoji}
+                          size="sm"
+                          variant={fileVotes[u] === emoji ? "default" : "outline"}
+                          className="h-7 w-7 p-0 text-sm flex items-center justify-center"
+                          onClick={() =>
+                            handleVote(drawerProduct.id, file.path, u, emoji)
+                          }
+                        >
+                          {emoji}
+                        </Button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              );
-            })()}
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+})()}
+
 
             {/* Liens fichiers */}
             {(drawerProduct.files || []).length > 0 && (
