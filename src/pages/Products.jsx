@@ -14,138 +14,166 @@ import { Slider } from "@/components/ui/slider";
 import {
   Save, Trash2, Package, Printer, DollarSign, Filter, Upload, PencilLine,
 } from "lucide-react";
+import { supabase } from "@/lib/supabaseClient";
+import ImageGenerator from "@/components/ui/ImageGenerator";
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
+
 
 /* ========= SUPABASE CLIENT ========= */
 function makeClient() {
-    const url = import.meta.env.VITE_SUPABASE_URL;
-    const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
-  
-    if (!url || !key) {
-      console.error("Supabase URL ou Anon Key manquante ⚠️");
-      return null;
-    }
-    return createClient(url, key);
+  const url = import.meta.env.VITE_SUPABASE_URL;
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  if (!url || !key) {
+    console.error("Supabase URL ou Anon Key manquante ⚠️");
+    return null;
   }
+  return createClient(url, key);
+}
+
+/* ========= COMPOSANT PRINCIPAL ========= */
+export default function Products() {
+  // ✅ États généraux
+  const [author, setAuthor] = useState("");
+  const [pipelineStatus, setPipelineStatus] = useState("Attente validation interne");
+  const [followupAt, setFollowupAt] = useState("");
+  const [images, setImages] = useState([]);
+  const [votes, setVotes] = useState({});
+
+    // ✅ États principaux du produit
+    const [status, setStatus] = useState("Prototype");
+    const [name, setName] = useState("");
+    const [sku, setSku] = useState("");
+    const [kind, setKind] = useState("3d");
+    const [version, setVersion] = useState("V1");
+    const [desc, setDesc] = useState("");
+    const [folder, setFolder] = useState("");
+    const [tagsText, setTagsText] = useState("");
+    const [weight, setWeight] = useState(0);
+    const [dimensions, setDimensions] = useState("");
+    const [colors, setColors] = useState(["Noir"]);
+    const [drawerProduct, setDrawerProduct] = useState(null);
+  
+    // ✅ États prix et calculs
+    const [margin, setMargin] = useState(0.45);
+    const [resellerDiscount, setResellerDiscount] = useState(0.30);
+    const [retailPrice, setRetailPrice] = useState(0);
+    const [resellerPrice, setResellerPrice] = useState(0);
+  
+    // ✅ États liés à la liste / filtrage
+    const [items, setItems] = useState([]);
+    const [filterKind, setFilterKind] = useState("all");
+    const [q, setQ] = useState("");
+  
+    // ✅ États pour édition / messages / fichiers
+    const [editingId, setEditingId] = useState(null);
+    const [pendingFiles, setPendingFiles] = useState([]);
+    const [baseOnId, setBaseOnId] = useState("");
+    const [msg, setMsg] = useState("");
+    const [configured, setConfigured] = useState(true); // à adapter si tu veux tester sans Supabase
   
 
-/* ========= CONSTANTES / HELPERS ========= */
-const DEFAULT_MARGIN = 0.45;
-const DEFAULT_RESELLER_DISCOUNT = 0.30;
-const ELECTRICITY_RATE = 0.12;
+  // ✅ États spécifiques aux coûts / commandes
+  const [threeD, setThreeD] = useState({
+    gramsUsed: 120,
+    spoolCostPerKg: 25,
+    printHours: 3,
+    machineRate: 2,
+    laborRate: 0,
+    energyKwh: 0,
+  });
 
-const presets = {
-  colors: ["Noir", "Blanc", "Rouge", "Bleu", "Vert", "Gris", "Or", "Argent"],
-  filament: ["PLA", "PETG", "ABS", "TPU"],
-  statuses: ["Idée", "Prototype", "Production", "Commercialisé"],
-};
+  const [ordered, setOrdered] = useState({
+    supplier: "",
+    supplierContact: "",
+    unitCost: 20,
+    importPerUnit: 2.5,
+    customizationCost: 0,
+    moq: 0,
+    leadTime: "",
+  });
 
-const empty3D = {
-  filamentType: "PLA",
-  color: "Noir",
-  gramsUsed: 120,
-  spoolCostPerKg: 25,
-  printHours: 3,
-  machineRate: 2,
-  laborRate: 0,
-  energyKwh: 0,
-};
+  /* ========= CONSTANTES / HELPERS ========= */
+  const code = sku || autoCode({ name, kind });
+  const DEFAULT_MARGIN = 0.45;
+  const DEFAULT_RESELLER_DISCOUNT = 0.30;
+  const ELECTRICITY_RATE = 0.12;
 
-const emptyOrdered = {
-  supplier: "",
-  supplierContact: "",
-  unitCost: 20,
-  importPerUnit: 2.5,
-  customizationCost: 0,
-  moq: 0,
-  leadTime: "",
-};
+  const presets = {
+    colors: ["Noir", "Blanc", "Rouge", "Bleu", "Vert", "Gris", "Or", "Argent"],
+    filament: ["PLA", "PETG", "ABS", "TPU"],
+    statuses: ["Idée", "Prototype", "Production", "Commercialisé"],
+  };
 
-function currency(n) {
-  if (Number.isNaN(+n)) return "-";
-  return new Intl.NumberFormat("fr-CA", {
-    style: "currency",
-    currency: "CAD",
-  }).format(+n);
-}
-function slugify(s) {
-  return (s || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
-}
-function today() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}${m}${day}`;
-}
-function autoCode({ name, kind }) {
-  const base = slugify(name || "produit");
-  const t = kind === "3d" ? "3D" : "ORD";
-  return `${t}_${base}_${today()}`.toUpperCase();
-}
-function nextVersionForCode(items, code) {
-  // Cherche V<number> dans items partageant le même code et retourne V(n+1)
-  const vers = (items || [])
-    .filter((p) => p.code === code && typeof p.version === "string")
-    .map((p) => {
-      const m = (p.version || "").match(/^V(\d+)$/i);
-      return m ? parseInt(m[1], 10) : 0;
-    });
-  const maxV = vers.length ? Math.max(...vers) : 0;
-  return `V${maxV + 1}`;
-}
-function isImagePath(pathOrName = "") {
-  return /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(pathOrName);
-}
+  const empty3D = {
+    filamentType: "PLA",
+    color: "Noir",
+    gramsUsed: 120,
+    spoolCostPerKg: 25,
+    printHours: 3,
+    machineRate: 2,
+    laborRate: 0,
+    energyKwh: 0,
+  };
 
-/* ========= PAGE ========= */
-export default function Products() {
-  const supabase = makeClient();
-  const configured = !!supabase;
+  const emptyOrdered = {
+    supplier: "",
+    supplierContact: "",
+    unitCost: 20,
+    importPerUnit: 2.5,
+    customizationCost: 0,
+    moq: 0,
+    leadTime: "",
+  };
 
-  // Filtres / liste
-  const [items, setItems] = useState([]);
-  const [filterKind, setFilterKind] = useState("all");
-  const [q, setQ] = useState("");
+  /* ========= FONCTIONS UTILITAIRES ========= */
+  function currency(n) {
+    if (Number.isNaN(+n)) return "-";
+    return new Intl.NumberFormat("fr-CA", {
+      style: "currency",
+      currency: "CAD",
+    }).format(+n);
+  }
 
-  // Formulaire
-  const [editingId, setEditingId] = useState(null);
-  const [kind, setKind] = useState("3d");
-  const [status, setStatus] = useState("Prototype");
+  function slugify(s) {
+    return (s || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/\p{Diacritic}/gu, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "");
+  }
 
-  const [name, setName] = useState("");
-  const [sku, setSku] = useState("");
-  const [version, setVersion] = useState("V1"); // 🆕 champ Version
-  const [desc, setDesc] = useState("");
-  const [weight, setWeight] = useState(0);
-  const [dimensions, setDimensions] = useState("");
-  const [colors, setColors] = useState(["Noir"]);
-  const [folder, setFolder] = useState("");
-  const [tagsText, setTagsText] = useState("");
-  const [author, setAuthor] = useState(""); // 🆕 nouvel état
+  function today() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+  }
 
-  // Clonage (basé sur produit existant)
-  const [baseOnId, setBaseOnId] = useState(""); // 🆕
+  function autoCode({ name, kind }) {
+    const base = slugify(name || "produit");
+    const t = kind === "3d" ? "3D" : "ORD";
+    return `${t}_${base}_${today()}`.toUpperCase();
+  }
 
-  const [threeD, setThreeD] = useState({ ...empty3D });
-  const [ordered, setOrdered] = useState({ ...emptyOrdered });
+  function nextVersionForCode(items, code) {
+    const vers = (items || [])
+      .filter((p) => p.code === code && typeof p.version === "string")
+      .map((p) => {
+        const m = (p.version || "").match(/^V(\d+)$/i);
+        return m ? parseInt(m[1], 10) : 0;
+      });
+    const maxV = vers.length ? Math.max(...vers) : 0;
+    return `V${maxV + 1}`;
+  }
 
-  // Prix (saisie manuelle) + aides de calcul
-  const [margin, setMargin] = useState(DEFAULT_MARGIN);
-  const [resellerDiscount, setResellerDiscount] = useState(DEFAULT_RESELLER_DISCOUNT);
-  const [retailPrice, setRetailPrice] = useState(0);   // saisi par toi
-  const [resellerPrice, setResellerPrice] = useState(0); // saisi par toi
+  function isImagePath(pathOrName = "") {
+    return /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(pathOrName);
+  }
 
-  // Fichiers en attente d’upload
-  const [pendingFiles, setPendingFiles] = useState([]);
-
-  const [msg, setMsg] = useState("");
-
-  /* ======= Calcul du coût = matière + temps + énergie ======= */
+  /* ======= Calcul du coût 3D ======= */
   const cost3D = useMemo(() => {
     const material = (threeD.gramsUsed / 1000) * threeD.spoolCostPerKg;
     const timeCost = threeD.printHours * (threeD.machineRate + threeD.laborRate);
@@ -220,6 +248,12 @@ export default function Products() {
     setPendingFiles([]);
     setBaseOnId("");
     setMsg("");
+    setAuthor("");
+setPipelineStatus("Attente validation interne");
+setFollowupAt("");
+setImages([]);
+setVotes({});
+
   }
 
   function startEdit(it) {
@@ -235,6 +269,10 @@ export default function Products() {
     setColors(it.specs?.colors || ["Noir"]);
     setFolder(it.folder || "");
     setTagsText((it.tags || []).join(", "));
+    setAuthor(it.author || "");
+setPipelineStatus(it.pipeline_status || "Attente validation interne");
+setFollowupAt(it.followup_at ? it.followup_at.split("T")[0] : "");
+
 
     if (it.kind === "3d") {
       setThreeD({
@@ -325,6 +363,7 @@ export default function Products() {
   /* ======= Upload fichiers ======= */
   async function uploadFiles(productId) {
     if (!configured || pendingFiles.length === 0) return [];
+  
     const bucket = supabase.storage.from("product_file");
     const uploaded = [];
   
@@ -334,19 +373,35 @@ export default function Products() {
       if (error) {
         console.error("Erreur upload Supabase:", error.message);
       } else {
-        console.log("Upload OK:", data);
-        uploaded.push({ name: f.name, path });
+        uploaded.push({
+          name: f.name,
+          path,
+          size: f.size || 0,
+          type: f.type || "unknown",
+        });
       }
     }
+  
     return uploaded;
   }
   
+  // 🆕 Nouvelle fonction : suppression d’un fichier
+  async function deleteFile(productId, filePath) {
+    if (!configured) return;
+    const bucket = supabase.storage.from("product_file");
+    const { error } = await bucket.remove([filePath]);
+    if (error) console.error("Erreur suppression fichier:", error.message);
+  }
+  
+  
 
   /* ======= Enregistrer / mettre à jour ======= */
+  const validFiles = (pendingFiles || []).filter(f => f && f.name);
+
   async function saveItem() {
     try {
       if (!name) return setMsg("Le nom est requis.");
-      const code = sku || autoCode({ name, kind });
+      
       const record = {
         kind,
         name,
@@ -370,6 +425,9 @@ export default function Products() {
           resellerDiscount,
         },
         build: kind === "3d" ? { ...threeD } : { ...ordered },
+        author: author || null,
+  pipeline_status: pipelineStatus,
+  followup_at: followupAt ? new Date(followupAt).toISOString() : null,
       };
 
       if (!configured) {
@@ -390,7 +448,7 @@ export default function Products() {
         if (error) throw error;
 
         // Upload fichiers si besoin puis PATCH la ligne pour stocker les paths
-        const files = await uploadFiles(data.id);
+        const files = validFiles.length ? await uploadFiles(data.id) : [];
         if (files.length) {
           const { data: patched, error: e2 } = await supabase
             .from("products")
@@ -467,6 +525,52 @@ export default function Products() {
       return okKind && okQ;
     });
   }, [items, filterKind, q]);
+// 🧩 Suppression visuelle et en DB
+async function removeImage(productId, file) {
+  if (!window.confirm(`Supprimer ${file.name} ?`)) return;
+
+  await deleteFile(productId, file.path);
+
+  const current = items.find((p) => p.id === productId);
+  if (!current) return;
+
+  const newFiles = (current.files || []).filter((f) => f.path !== file.path);
+
+  const { data, error } = await supabase
+    .from("products")
+    .update({ files: newFiles })
+    .eq("id", productId)
+    .select()
+    .single();
+
+  if (!error) {
+    setItems((prev) => [data, ...prev.filter((p) => p.id !== productId)]);
+  }
+}
+
+async function handleVote(productId, imagePath, direction) {
+  const current = items.find((p) => p.id === productId);
+  if (!current) return;
+
+  const newVotes = { ...(current.votes || {}) };
+  const currentVote = newVotes[imagePath] || { up: 0, down: 0 };
+
+  if (direction === "up") currentVote.up++;
+  else currentVote.down++;
+
+  newVotes[imagePath] = currentVote;
+
+  const { data, error } = await supabase
+    .from("products")
+    .update({ votes: newVotes })
+    .eq("id", productId)
+    .select()
+    .single();
+
+  if (!error) {
+    setItems((prev) => [data, ...prev.filter((p) => p.id !== productId)]);
+  }
+}
 
   /* ======= Rendu ======= */
   return (
@@ -479,11 +583,47 @@ export default function Products() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl p-4 grid md:grid-cols-2 gap-4">
-        {/* ========= FORM ========= */}
-        <Card className="shadow-sm border-slate-200">
-          <CardContent className="p-4 space-y-4">
+      <main className="mx-auto max-w-7xl p-4 grid md:grid-cols-2 gap-4">
+  {/* ========= FORMULAIRE (colonne gauche) ========= */}
+  <Card className="shadow-sm border-slate-200">
+    <CardContent className="p-4 space-y-4">
             {/* Lignes type / statut */}
+            <div className="grid grid-cols-2 gap-3 mt-4">
+  <div>
+    <Label>Auteur de la fiche</Label>
+    <Select value={author} onValueChange={setAuthor}>
+      <SelectTrigger className="w-full">
+        <SelectValue placeholder="Choisir" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="David">David</SelectItem>
+        <SelectItem value="Guillaume">Guillaume</SelectItem>
+      </SelectContent>
+    </Select>
+  </div>
+
+  <div>
+    <Label>Statut (pipeline CRM)</Label>
+    <Select value={pipelineStatus} onValueChange={setPipelineStatus}>
+      <SelectTrigger className="w-full">
+        <SelectValue placeholder="Sélectionner" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="Attente validation interne">Attente validation interne</SelectItem>
+        <SelectItem value="En attente retour fournisseur">En attente retour fournisseur</SelectItem>
+        <SelectItem value="Validé">Validé</SelectItem>
+        <SelectItem value="Commandé">Commandé</SelectItem>
+        <SelectItem value="Annulé">Annulé</SelectItem>
+      </SelectContent>
+    </Select>
+  </div>
+</div>
+
+<div className="mt-3">
+  <Label>Date de suivi (optionnel)</Label>
+  <Input type="date" value={followupAt} onChange={(e) => setFollowupAt(e.target.value)} />
+</div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Type</Label>
@@ -802,6 +942,23 @@ export default function Products() {
               )}
             </div>
 
+{/* ====== Génération d'image par IA ====== */}
+<div className="mt-6">
+  <h2 className="text-md font-semibold mb-2">🎨 Génération d’image</h2>
+  <p className="text-sm text-slate-600 mb-2">
+    Génère une image conceptuelle du produit à partir de sa description ou de son nom.
+  </p>
+  <ImageGenerator
+    productName={name}
+    description={desc}
+    onGenerated={async (imageBlob) => {
+      if (!imageBlob) return;
+      const file = new File([imageBlob], `${slugify(name)}_ai.png`, { type: "image/png" });
+      setPendingFiles((prev) => [...prev, file]);
+    }}
+  />
+</div>
+
             <div className="flex gap-2 justify-end">
               <Button variant="secondary" onClick={resetForm} className="gap-2">
                 Réinitialiser
@@ -820,107 +977,250 @@ export default function Products() {
           </CardContent>
         </Card>
 
-        {/* ========= LISTE ========= */}
-        <Card className="shadow-sm border-slate-200">
-          <CardContent className="p-4 space-y-3">
-            <div className="flex items-center gap-3">
-              <Filter className="h-4 w-4" />
-              <Select value={filterKind} onValueChange={setFilterKind}>
-                <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tous</SelectItem>
-                  <SelectItem value="3d">Impression 3D</SelectItem>
-                  <SelectItem value="ordered">Commandé</SelectItem>
-                </SelectContent>
-              </Select>
-              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Recherche nom, code, tag…" className="ml-auto max-w-sm" />
-            </div>
+{/* ========= LISTE PRODUITS (colonne droite) ========= */}
+<section className="flex flex-col">
+    {/* ===== BARRE DE FILTRES ===== */}
+    <div className="sticky top-16 z-10 bg-white/90 backdrop-blur border rounded-xl px-3 py-2 flex items-center gap-3">
+      <Filter className="h-4 w-4 text-slate-500" />
+      <Select value={filterKind} onValueChange={setFilterKind}>
+        <SelectTrigger className="w-32"><SelectValue placeholder="Type" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">Tous</SelectItem>
+          <SelectItem value="3d">Impression 3D</SelectItem>
+          <SelectItem value="ordered">Commandé</SelectItem>
+        </SelectContent>
+      </Select>
 
-            <div className="grid gap-3">
-              {filtered.length === 0 && (
-                <div className="text-slate-500 text-sm">Aucun produit enregistré pour l'instant.</div>
-              )}
-              {filtered.map((it) => {
-                // 🆕 essaie d’extraire une image si disponible
-                const imageFile = (it.files || []).find((f) => isImagePath(f?.path || f?.name));
-                const imgUrl = imageFile ? getPublicUrl(imageFile.path) : null;
+      <Input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Recherche nom, code, tag…"
+        className="ml-auto max-w-xs"
+      />
+    </div>
 
-                return (
-                  <div key={it.id} className="border rounded-2xl p-3 flex items-center gap-3 bg-white">
-                    {/* Aperçu image (optionnel) */}
-                    {imgUrl ? (
-                      <div className="shrink-0">
-                        <img
-                          src={imgUrl}
-                          alt={imageFile?.name || "Aperçu produit"}
-                          className="w-16 h-16 object-cover rounded-lg border"
-                        />
-                      </div>
-                    ) : (
-                      <div className="w-2 h-10 rounded-full" style={{ background: it.kind === "3d" ? "#60a5fa" : "#f59e0b" }} />
-                    )}
-
-                    <div className="flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="font-semibold">{it.name}</div>
-                        <Badge variant="outline">{it.kind === "3d" ? "3D" : "CMD"}</Badge>
-                        {it.version && <Badge variant="secondary">{it.version}</Badge>}
-                        {it.status && <Badge variant="secondary">{it.status}</Badge>}
-                        {it.author && <Badge variant="outline" className="bg-blue-50">{it.author}</Badge>}
-                        {!!(it.tags && it.tags.length) && (
-                          <span className="text-xs text-slate-500">#{it.tags.join(" #")}</span>
-                        )}
-                        <span className="text-xs text-slate-500">{new Date(it.created_at).toLocaleString()}</span>
-                      </div>
-
-                      <div className="text-xs text-slate-600">{it.code} · {it.description || "—"}</div>
-
-                      {/* Liens fichiers */}
-                      {it.files && it.files.length > 0 && (
-                        <div className="text-xs mt-1 space-y-1">
-                          {it.files.map((f, i) => {
-                            const { data } = configured
-                              ? supabase.storage.from("product_file").getPublicUrl(f.path)
-                              : { data: { publicUrl: "#" } };
-                            return (
-                              <a
-                                key={i}
-                                href={data.publicUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-blue-600 hover:underline block"
-                              >
-                                📎 {f.name}
-                              </a>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      <div className="text-sm mt-1 flex flex-wrap items-center gap-2">
-                        {it.pricing && (
-                          <>
-                            <Badge variant="outline">Coût {currency(it.pricing.cost)}</Badge>
-                            <Badge variant="outline">Public {currency(it.pricing.retail)}</Badge>
-                            <Badge variant="outline">Revendeur {currency(it.pricing.reseller)}</Badge>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    <Button size="icon" variant="ghost" title="Éditer" onClick={() => startEdit(it)}>
-                      <PencilLine className="h-4 w-4" />
-                    </Button>
-                    <Button size="icon" variant="ghost" title="Supprimer" onClick={() => removeItem(it.id)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
+    {/* ===== GRILLE DE MINI-CARTES ===== */}
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+      {filtered.length === 0 && (
+        <Card className="border-slate-200">
+          <CardContent className="p-6 text-slate-500 text-sm">
+            Aucun produit ne correspond aux filtres.
           </CardContent>
         </Card>
-      </main>
+      )}
+
+      {filtered.map((it) => {
+        const validFiles = (it.files || []).filter((f) => f && (f.path || f.name));
+        const imageFiles = validFiles.filter((f) => isImagePath(f.path || f.name));
+        const mainImg = imageFiles[0]
+          ? supabase.storage.from("product_file").getPublicUrl(imageFiles[0].path).data.publicUrl
+          : "https://placehold.co/400x300?text=No+Image";
+
+        return (
+          <div
+            key={it.id}
+            onClick={() => setDrawerProduct(it)}
+            className="cursor-pointer border rounded-xl bg-white hover:shadow-lg transition p-3 flex flex-col"
+          >
+            <div className="relative">
+              <img
+                src={mainImg}
+                alt={it.name}
+                className="w-full h-36 object-cover rounded-lg border"
+              />
+              {it.status && (
+                <span className="absolute top-2 left-2 text-xs px-2 py-0.5 rounded-full bg-white/90 border">
+                  {it.status}
+                </span>
+              )}
+            </div>
+
+            <div className="mt-2 space-y-1">
+              <div className="flex justify-between items-center">
+                <h3 className="font-semibold text-sm truncate">{it.name}</h3>
+                <Badge variant="outline">{it.kind === "3d" ? "3D" : "CMD"}</Badge>
+              </div>
+
+              <p className="text-xs text-slate-500 line-clamp-2">
+                {it.description || "—"}
+              </p>
+
+              <div className="flex flex-wrap gap-1 mt-1">
+                {it.pipeline_status && <Badge className="bg-slate-100">{it.pipeline_status}</Badge>}
+                {Array.isArray(it.tags) && it.tags.slice(0, 2).map((t) => (
+                  <Badge key={t} variant="outline" className="text-xs">{t}</Badge>
+                ))}
+              </div>
+
+              <div className="flex justify-between mt-2 text-[11px] text-slate-500">
+                <span>{it.author || "—"}</span>
+                <span>{new Date(it.created_at).toLocaleDateString()}</span>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  title="Éditer"
+                  onClick={(e) => { e.stopPropagation(); startEdit(it); }}
+                >
+                  <PencilLine className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  title="Supprimer"
+                  onClick={(e) => { e.stopPropagation(); removeItem(it.id); }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
     </div>
-  );
+  </section>
+
+  {/* ===== DRAWER DÉTAIL PRODUIT ===== */}
+  <Drawer open={!!drawerProduct} onOpenChange={(open) => !open && setDrawerProduct(null)}>
+    <DrawerContent className="max-w-md ml-auto border-l bg-white p-0 overflow-y-auto">
+      {drawerProduct && (
+        <>
+          <DrawerHeader className="px-4 py-3 border-b">
+            <DrawerTitle className="text-lg">{drawerProduct.name}</DrawerTitle>
+            <p className="text-xs text-slate-500">{drawerProduct.code}</p>
+          </DrawerHeader>
+
+          <div className="p-4 space-y-4">
+            {/* Image principale réduite et centrée */}
+            <div className="flex justify-center">
+              <img
+                src={
+                  (drawerProduct.files || []).some((f) => isImagePath(f.path))
+                    ? supabase.storage
+                        .from("product_file")
+                        .getPublicUrl(
+                          drawerProduct.files.find((f) => isImagePath(f.path)).path
+                        ).data.publicUrl
+                    : "https://placehold.co/600x400?text=No+Image"
+                }
+                className="max-w-[300px] rounded-lg border shadow-sm"
+                alt={drawerProduct.name}
+              />
+            </div>
+
+            {/* Métadonnées */}
+            <div className="flex flex-wrap gap-2 justify-center">
+              {drawerProduct.status && <Badge>{drawerProduct.status}</Badge>}
+              {drawerProduct.pipeline_status && (
+                <Badge variant="outline">{drawerProduct.pipeline_status}</Badge>
+              )}
+              <Badge variant="outline">
+                {drawerProduct.kind === "3d" ? "Impression 3D" : "Commandé"}
+              </Badge>
+              {drawerProduct.version && <Badge variant="secondary">{drawerProduct.version}</Badge>}
+            </div>
+
+            <p className="text-sm text-slate-700 text-center">
+              {drawerProduct.description || "Aucune description."}
+            </p>
+
+            {/* Galerie & votes */}
+            {(() => {
+              const imgs = (drawerProduct.files || []).filter(
+                (f) => f && (f.path || f.name) && isImagePath(f.path || f.name)
+              );
+              if (!imgs.length) return null;
+              return (
+                <div>
+                  <div className="text-sm font-medium mb-2">Images & votes</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {imgs.map((file, idx) => {
+                      const { data } = supabase.storage.from("product_file").getPublicUrl(file.path);
+                      const url = data.publicUrl;
+                      const productVotes = drawerProduct.votes || {};
+                      const thisVote = productVotes[file.path] || { up: 0, down: 0 };
+                      return (
+                        <div key={idx} className="border rounded-xl p-2 bg-white shadow-sm">
+                          <img src={url} alt={file.name} className="w-full h-24 object-cover rounded-lg border" />
+                          <div className="flex gap-2 mt-2 justify-center">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleVote(drawerProduct.id, file.path, "up")}
+                            >
+                              👍 {thisVote.up}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleVote(drawerProduct.id, file.path, "down")}
+                            >
+                              👎 {thisVote.down}
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Liens fichiers */}
+            {(drawerProduct.files || []).length > 0 && (
+              <div>
+                <div className="text-xs font-medium text-slate-600 mb-1">Fichiers</div>
+                <div className="space-y-1 text-xs">
+                  {drawerProduct.files.map((f, i) => {
+                    const { data } = supabase.storage.from("product_file").getPublicUrl(f.path);
+                    return (
+                      <div key={i} className="flex items-center gap-2">
+                        <a
+                          href={data.publicUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline"
+                        >
+                          📎 {f.name}
+                        </a>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={async () => { await removeImage(drawerProduct.id, f); }}
+                          title="Supprimer"
+                        >
+                          <Trash2 className="h-3 w-3 text-red-500" />
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Métadonnées bas */}
+            <div className="text-xs text-slate-500 text-center">
+              <p>Auteur : {drawerProduct.author || "—"}</p>
+              <p>Créé le : {new Date(drawerProduct.created_at).toLocaleString()}</p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex justify-center gap-2 pt-2">
+              <Button variant="outline" onClick={() => startEdit(drawerProduct)}>
+                Modifier
+              </Button>
+              <Button variant="destructive" onClick={() => removeItem(drawerProduct.id)}>
+                Supprimer
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
+    </DrawerContent>
+  </Drawer>
+</main>
+</div>
+);
 }
