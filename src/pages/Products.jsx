@@ -1046,7 +1046,14 @@ async function handleVote(productId, imagePath, direction) {
               </p>
 
               <div className="flex flex-wrap gap-1 mt-1">
-                {it.pipeline_status && <Badge className="bg-slate-100">{it.pipeline_status}</Badge>}
+              {it.pipeline_status && (
+  <span
+    className="text-[11px] border rounded-md px-2 py-0.5 bg-gray-50 text-gray-700 hover:bg-gray-700 hover:text-white transition-colors"
+    title="Statut CRM"
+  >
+    {it.pipeline_status}
+  </span>
+)}
                 {Array.isArray(it.tags) && it.tags.slice(0, 2).map((t) => (
                   <Badge key={t} variant="outline" className="text-xs">{t}</Badge>
                 ))}
@@ -1201,10 +1208,22 @@ async function handleVote(productId, imagePath, direction) {
             )}
 
             {/* Métadonnées bas */}
-            <div className="text-xs text-slate-500 text-center">
-              <p>Auteur : {drawerProduct.author || "—"}</p>
-              <p>Créé le : {new Date(drawerProduct.created_at).toLocaleString()}</p>
-            </div>
+            {/* Détails techniques */}
+<div className="mt-4 border-t pt-3">
+  <h3 className="text-sm font-semibold mb-2">Spécifications techniques</h3>
+  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600">
+    <p><strong>Type :</strong> {drawerProduct.kind === "3d" ? "Impression 3D" : "Commandé"}</p>
+    <p><strong>Statut :</strong> {drawerProduct.status || "—"}</p>
+    <p><strong>Pipeline :</strong> {drawerProduct.pipeline_status || "—"}</p>
+    <p><strong>Auteur :</strong> {drawerProduct.author || "—"}</p>
+    <p><strong>Version :</strong> {drawerProduct.version || "—"}</p>
+    <p><strong>Poids :</strong> {drawerProduct.weight ? `${drawerProduct.weight} g` : "—"}</p>
+    <p><strong>Dimensions :</strong> {drawerProduct.dimensions || "—"}</p>
+    <p><strong>Dossier :</strong> {drawerProduct.folder || "—"}</p>
+    <p><strong>Tags :</strong> {Array.isArray(drawerProduct.tags) && drawerProduct.tags.length > 0 ? drawerProduct.tags.join(", ") : "—"}</p>
+    <p><strong>Date de création :</strong> {new Date(drawerProduct.created_at).toLocaleDateString()}</p>
+  </div>
+</div>
 
             {/* Actions */}
             <div className="flex justify-center gap-2 pt-2">
